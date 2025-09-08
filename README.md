@@ -22,7 +22,7 @@ A tmux plugin for managing Claude Code instances with a fuzzy-finding popup inte
 Add plugin to your `~/.tmux.conf`:
 
 ```bash
-set -g @plugin 'username/tmux-claude-code'
+set -g @plugin 'henri23lemoine/tmux-claude-code'
 ```
 
 Press `prefix + I` to fetch and source the plugin.
@@ -31,7 +31,7 @@ Press `prefix + I` to fetch and source the plugin.
 
 Clone the repository:
 ```bash
-git clone https://github.com/username/tmux-claude-code ~/.tmux/plugins/tmux-claude-code
+git clone https://github.com/henri123lemoine/tmux-claude-code ~/.tmux/plugins/tmux-claude-code
 ```
 
 Add to `~/.tmux.conf`:
@@ -48,7 +48,7 @@ This opens a popup showing all Claude Code instances sorted by status:
 - ⚡ Processing 
 - 💻 Active
 
-Use `j/k` or arrow keys to navigate, `Enter` to switch to selected instance, `Esc` to cancel.
+Use arrow keys to navigate, `Enter` to switch to selected instance, `Esc` to cancel.
 
 ## Configuration
 
@@ -73,6 +73,3 @@ The plugin detects Claude Code instances by:
 2. Analyzing pane content to determine status
 3. Sorting by priority and presenting in fzf interface
 
-## License
-
-MIT License - see [LICENSE](LICENSE) file.
