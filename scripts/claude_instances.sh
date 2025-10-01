@@ -1,130 +1,116 @@
 #!/bin/bash
 # Claude Code instance detector for tmux
-# Bash equivalent of claude_instances.py
+
+readonly STATUS_WAITING=1
+readonly STATUS_PROCESSING=2
+readonly STATUS_ACTIVE=3
+
+detect_provider() {
+    local command=$1
+    local content=$2
+
+    case "$command" in
+        claude-code) echo "Claude"; return ;;
+        copilot) echo "GitHub"; return ;;
+    esac
+
+    if [[ "$content" =~ (Claude Code|claude-code|⎿) ]]; then
+        echo "Claude"
+    elif [[ "$content" =~ (copilot|github\.com) ]]; then
+        echo "GitHub"
+    elif [[ "$content" =~ (openai|codex) ]]; then
+        echo "OpenAI"
+    else
+        echo "Unknown"
+    fi
+}
+
+detect_status() {
+    local content=$1
+
+    if [[ "$content" =~ "⎿  Running…" ]]; then
+        echo "$STATUS_PROCESSING"
+    elif [[ "$content" =~ ("│ > "|"│ >"|"-- INSERT --") ]]; then
+        echo "$STATUS_WAITING"
+    else
+        echo "$STATUS_ACTIVE"
+    fi
+}
+
+format_instance() {
+    local priority=$1
+    local timestamp=$2
+    local target=$3
+    local session=$4
+    local provider=$5
+    local path=$6
+    local status=$7
+
+    local emoji color reset status_label
+
+    case "$status" in
+        "$STATUS_WAITING")
+            emoji="⏳"
+            color="\033[1;33m"
+            status_label="Waiting For Input"
+            ;;
+        "$STATUS_PROCESSING")
+            emoji="⚡"
+            color="\033[1;32m"
+            status_label="Processing"
+            ;;
+        *)
+            emoji="💻"
+            color=""
+            status_label="Active"
+            ;;
+    esac
+    reset="\033[0m"
+
+    printf "%s|%s|%b%s %s | %s (%s) | %s | %s%b\n" \
+        "$priority" "$timestamp" \
+        "$color" "$emoji" "$status_label" "$target" "$session" "$provider" "$path" "$reset"
+}
 
 get_claude_instances() {
-    # Get all tmux panes with node processes
     local panes
-    if ! panes=$(tmux list-panes -a -F "#{session_name}:#{window_index}.#{pane_index}|#{pane_current_command}|#{pane_current_path}" 2>/dev/null); then
-        return 1
-    fi
+    panes=$(tmux list-panes -a -F "#{session_name}:#{window_index}.#{pane_index}|#{pane_current_command}|#{pane_current_path}|#{window_activity}" 2>/dev/null) || return 1
 
-    # Arrays to store instance data
-    local targets=()
-    local sessions=()
-    local paths=()
-    local statuses=()
-    local priorities=()
-
-    # Process each pane
-    while IFS='|' read -r target command path; do
+    while IFS='|' read -r target command path timestamp; do
         [[ -z "$target" || -z "$command" || -z "$path" ]] && continue
-        
-        # Skip non-Claude processes
-        [[ "$command" != "node" && "$command" != "claude-code" ]] && continue
+        [[ ! "$command" =~ ^(node|claude-code|python|python3|copilot)$ ]] && continue
 
-        # Get pane content to determine status
         local content
-        if ! content=$(tmux capture-pane -t "$target" -p 2>/dev/null); then
-            continue
-        fi
+        content=$(tmux capture-pane -t "$target" -p 2>/dev/null) || continue
 
-        # Get last 8 lines for status detection
         local last_lines
         last_lines=$(echo "$content" | tail -n 8)
 
-        # Determine status from content
-        local status priority
-        if echo "$last_lines" | grep -q "⎿  Running…"; then
-            status="processing"
-            priority=2
-        elif echo "$last_lines" | grep -q "│ > \|│ >\|-- INSERT --"; then
-            status="waiting_for_input"
-            priority=1
-        else
-            status="active"
-            priority=3
-        fi
+        local provider
+        provider=$(detect_provider "$command" "$content")
 
-        # Store instance data
-        targets+=("$target")
-        sessions+=("${target%%:*}")  # Extract session name
-        paths+=("$path")
-        statuses+=("$status")
-        priorities+=("$priority")
+        local status
+        status=$(detect_status "$last_lines")
 
-    done <<< "$panes"
+        local session="${target%%:*}"
 
-    # Sort by priority (bubble sort for simplicity)
-    local n=${#targets[@]}
-    for ((i = 0; i < n - 1; i++)); do
-        for ((j = 0; j < n - i - 1; j++)); do
-            if [[ ${priorities[j]} -gt ${priorities[j+1]} ]]; then
-                # Swap all arrays
-                local temp_target=${targets[j]}
-                local temp_session=${sessions[j]}
-                local temp_path=${paths[j]}
-                local temp_status=${statuses[j]}
-                local temp_priority=${priorities[j]}
+        format_instance "$status" "$timestamp" "$target" "$session" "$provider" "$path" "$status"
 
-                targets[j]=${targets[j+1]}
-                sessions[j]=${sessions[j+1]}
-                paths[j]=${paths[j+1]}
-                statuses[j]=${statuses[j+1]}
-                priorities[j]=${priorities[j+1]}
-
-                targets[j+1]=$temp_target
-                sessions[j+1]=$temp_session
-                paths[j+1]=$temp_path
-                statuses[j+1]=$temp_status
-                priorities[j+1]=$temp_priority
-            fi
-        done
-    done
-
-    # Output instances in fzf-friendly format
-    for ((i = 0; i < n; i++)); do
-        local emoji
-        case "${statuses[i]}" in
-            "waiting_for_input") emoji="⏳" ;;
-            "processing") emoji="⚡" ;;
-            "active") emoji="💻" ;;
-            *) emoji="❓" ;;
-        esac
-
-        local color reset
-        case "${statuses[i]}" in
-            "waiting_for_input")
-                color="\033[1;33m"  # Yellow
-                reset="\033[0m"
-                ;;
-            "processing")
-                color="\033[1;32m"  # Green
-                reset="\033[0m"
-                ;;
-            *)
-                color=""
-                reset=""
-                ;;
-        esac
-
-        local status_display
-        status_display=$(echo "${statuses[i]}" | sed 's/_/ /g' | awk '{for(i=1;i<=NF;i++){ $i=toupper(substr($i,1,1)) substr($i,2) }}1')
-
-        printf "%b%s %s | %s (%s) | %s%b\n" \
-            "$color" "$emoji" "$status_display" "${targets[i]}" "${sessions[i]}" "${paths[i]}" "$reset"
-    done
+    done <<< "$panes" | sort -t'|' -k1n -k2rn | cut -d'|' -f3-
 }
 
 main() {
-    # Check if we have any instances
-    if ! get_claude_instances; then
+    local instances
+    instances=$(get_claude_instances)
+
+    if [[ -z "$instances" ]]; then
         echo "No Claude Code instances found."
         exit 0
     fi
+
+    echo "$instances"
 }
 
-# Only run main if script is executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
